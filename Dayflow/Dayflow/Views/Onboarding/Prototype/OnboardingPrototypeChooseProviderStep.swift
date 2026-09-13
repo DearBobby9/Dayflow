@@ -300,6 +300,8 @@ struct OnboardingPrototypeChooseProviderStep: View {
       iconCircle(systemName: "network")
     case .local:
       iconCircle(systemName: "laptopcomputer")
+    case .foundationModels:
+      iconCircle(systemName: "apple.intelligence")
     }
   }
 

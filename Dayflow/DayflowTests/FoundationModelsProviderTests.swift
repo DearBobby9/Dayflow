@@ -1,0 +1,190 @@
+import XCTest
+
+@testable import Dayflow
+
+@available(macOS 27.0, *)
+final class FoundationModelsProviderTests: XCTestCase {
+  func testInferenceDeadlineCancelsCallAndReleasesQueue() async throws {
+    let gate = FoundationModelsInferenceGate()
+    do {
+      _ = try await gate.run(timeout: .zero) {
+        try await Task.sleep(for: .seconds(60))
+        return 1
+      }
+      XCTFail("Expected a deadline failure")
+    } catch let error as NSError {
+      XCTAssertEqual(error.domain, FoundationModelsProvider.errorDomain)
+      XCTAssertEqual(error.code, 10)
+    }
+    let next = try await gate.run { 2 }
+    XCTAssertEqual(next, 2)
+  }
+
+  func testSequenceRejectsOverlappingAndZeroLengthCards() {
+    func card(_ start: String, _ end: String) -> ActivityCardData {
+      ActivityCardData(startTime: start, endTime: end, category: "Work", subcategory: "",
+        title: "Activity", summary: "", detailedSummary: "", distractions: nil, appSites: nil)
+    }
+    let provider = FoundationModelsProvider(logsCalls: false)
+    XCTAssertFalse(provider.validateCardSequence([card("9:20 PM", "9:35 PM"), card("9:25 PM", "9:40 PM")]).isValid)
+    XCTAssertFalse(provider.validateCardSequence([card("9:20 PM", "9:20 PM")]).isValid)
+    XCTAssertFalse(provider.validateCardSequence([card("invalid", "9:20 PM")]).isValid)
+    XCTAssertTrue(provider.validateCardSequence([card("11:50 PM", "12:05 AM"), card("12:05 AM", "12:20 AM")]).isValid)
+  }
+
+  func testSampledIndicesKeepsFirstAndLastAndCapsAt16() {
+    let indices = FoundationModelsProvider.sampledIndices(count: 91, maxFrames: 16)
+    XCTAssertEqual(indices.count, 16)
+    XCTAssertEqual(indices.first, 0)
+    XCTAssertEqual(indices.last, 90)
+    XCTAssertTrue(zip(indices, indices.dropFirst()).allSatisfy { $0 < $1 })
+  }
+
+  func testSampledIndicesReturnsAllWhenCountAtOrBelow16() {
+    XCTAssertEqual(
+      FoundationModelsProvider.sampledIndices(count: 16, maxFrames: 16),
+      Array(0..<16)
+    )
+    XCTAssertEqual(
+      FoundationModelsProvider.sampledIndices(count: 5, maxFrames: 16),
+      [0, 1, 2, 3, 4]
+    )
+    XCTAssertEqual(FoundationModelsProvider.sampledIndices(count: 0, maxFrames: 16), [])
+  }
+
+  func testObservationTextOmitsEvidenceSuffixWhenEmpty() {
+    XCTAssertEqual(
+      FoundationModelsProvider.observationText(
+        app: "Xcode", activity: "editing a Swift file", evidence: ""
+      ),
+      "Xcode: editing a Swift file"
+    )
+    XCTAssertEqual(
+      FoundationModelsProvider.observationText(
+        app: "Xcode", activity: "editing a Swift file", evidence: "   "
+      ),
+      "Xcode: editing a Swift file"
+    )
+    XCTAssertEqual(
+      FoundationModelsProvider.observationText(
+        app: "Xcode", activity: "editing a Swift file", evidence: "file name LLMService.swift"
+      ),
+      "Xcode: editing a Swift file Evidence: file name LLMService.swift"
+    )
+  }
+
+  func testObservationsUseNextFrameAsEndAndTenSecondsForLast() {
+    let observations = FoundationModelsProvider.observations(
+      from: [(100, "a"), (160, "b"), (250, "c")],
+      batchId: 7
+    )
+    XCTAssertEqual(observations.map(\.startTs), [100, 160, 250])
+    XCTAssertEqual(observations.map(\.endTs), [160, 250, 260])
+    XCTAssertTrue(observations.allSatisfy { $0.batchId == 7 })
+    XCTAssertTrue(observations.allSatisfy { $0.llmModel == "system-language-model" })
+    XCTAssertTrue(observations.allSatisfy { $0.metadata == nil })
+  }
+
+  func testErrorMessagesAvoidClassifierSubstrings() {
+    let representativeDetail: [Int: String] = [
+      1: "this Mac isn't eligible",
+      8: "timeout",
+    ]
+    let forbidden = [
+      "context size has been exceeded",
+      "cancelled",
+      "timed out",
+      "internal error",
+      "quota exceeded",
+      "failed to parse",
+      "missing coverage",
+      "failed to load",
+      "no llm provider configured",
+    ]
+
+    for code in 1...9 {
+      let message = FoundationModelsProvider.errorMessage(
+        code: code,
+        detail: representativeDetail[code] ?? ""
+      ).lowercased()
+      XCTAssertFalse(message.isEmpty)
+      for substring in forbidden {
+        XCTAssertFalse(message.contains(substring), "code \(code): \(substring)")
+      }
+    }
+
+    let error = FoundationModelsProvider.makeError(
+      code: 3,
+      message: FoundationModelsProvider.errorMessage(code: 3, detail: "")
+    )
+    XCTAssertEqual(error.domain, "FoundationModelsProvider")
+    XCTAssertEqual(
+      error.localizedDescription,
+      FoundationModelsProvider.errorMessage(code: 3, detail: "")
+    )
+  }
+
+  func testAvailabilityMappingCoversAllUnavailableReasons() {
+    XCTAssertEqual(
+      FoundationModelsProvider.availability(from: .available),
+      .available
+    )
+    XCTAssertEqual(
+      FoundationModelsProvider.availability(from: .unavailable(.deviceNotEligible)),
+      .deviceNotEligible
+    )
+    XCTAssertEqual(
+      FoundationModelsProvider.availability(from: .unavailable(.appleIntelligenceNotEnabled)),
+      .appleIntelligenceNotEnabled
+    )
+    XCTAssertEqual(
+      FoundationModelsProvider.availability(from: .unavailable(.modelNotReady)),
+      .modelNotReady
+    )
+  }
+
+  func testLiveTranscribeProducesObservations() async throws {
+    guard ProcessInfo.processInfo.environment["DAYFLOW_FM_LIVE"] == "1" else {
+      throw XCTSkip("set TEST_RUNNER_DAYFLOW_FM_LIVE=1 to run")
+    }
+    guard #available(macOS 27.0, *) else {
+      throw XCTSkip("Foundation Models live path needs macOS 27.")
+    }
+
+    let recordingsURL = FileManager.default.urls(
+      for: .applicationSupportDirectory,
+      in: .userDomainMask
+    )[0].appendingPathComponent("Dayflow/recordings", isDirectory: true)
+    let files = try FileManager.default.contentsOfDirectory(atPath: recordingsURL.path)
+      .filter { $0.hasSuffix(".jpg") }
+      .sorted()
+      .prefix(2)
+    guard files.count == 2 else {
+      throw XCTSkip("Need two local JPEG recordings to run the live test.")
+    }
+
+    let screenshots = files.enumerated().map { index, file in
+      Screenshot(
+        id: Int64(index + 1),
+        capturedAt: 1_000_000 + index * 10,
+        filePath: recordingsURL.appendingPathComponent(file).path,
+        fileSize: nil,
+        idleSecondsAtCapture: nil,
+        isDeleted: false,
+        frameIndex: nil
+      )
+    }
+    let provider = FoundationModelsProvider(logsCalls: false)
+    let result = try await provider.transcribeScreenshots(
+      screenshots,
+      batchStartTime: Date(timeIntervalSince1970: 1_000_000),
+      batchId: nil
+    )
+    XCTAssertEqual(result.observations.count, 2)
+    XCTAssertTrue(result.observations.allSatisfy { !$0.observation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
+    XCTAssertTrue(result.observations.allSatisfy { $0.observation.contains(": ") })
+    XCTAssertEqual(result.observations[0].endTs, 1_000_010)
+    XCTAssertEqual(result.observations[1].endTs, 1_000_020)
+    XCTAssertTrue(result.log.input?.hasPrefix("frames=2/2") == true)
+  }
+}

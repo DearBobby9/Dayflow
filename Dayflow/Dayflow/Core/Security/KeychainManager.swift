@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import LocalAuthentication
 import Security
 
 /// Thread-safe manager for securely storing API keys in macOS Keychain
@@ -57,9 +58,11 @@ final class KeychainManager {
   }
 
   /// Retrieves an API key from the keychain
-  /// - Parameter provider: The provider identifier
+  /// - Parameters:
+  ///   - provider: The provider identifier
+  ///   - allowInteraction: False for passive UI checks; unavailable credentials return nil.
   /// - Returns: The API key if found, nil otherwise
-  func retrieve(for provider: String) -> String? {
+  func retrieve(for provider: String, allowInteraction: Bool = true) -> String? {
     let timestamp = DateFormatter.localizedString(
       from: Date(), dateStyle: .none, timeStyle: .medium)
     print("\n🔐 [KeychainManager] Retrieving key for '\(provider)' at \(timestamp)")
@@ -69,13 +72,32 @@ final class KeychainManager {
       print("   Service: \(service)")
       print("   Account: \(provider)")
 
-      let query: [String: Any] = [
+      var query: [String: Any] = [
         kSecClass as String: kSecClassGenericPassword,
         kSecAttrService as String: service,
         kSecAttrAccount as String: provider,
         kSecReturnData as String: true,
         kSecMatchLimit as String: kSecMatchLimitOne,
       ]
+      if !allowInteraction {
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        query[kSecUseAuthenticationContext as String] = context
+      }
+
+      // Existing macOS login-keychain items ignore the Data Protection UI flag.
+      // Serialize and restore the legacy interaction policy around this read.
+      var previousInteraction: DarwinBoolean = true
+      if !allowInteraction {
+        guard SecKeychainGetUserInteractionAllowed(&previousInteraction) == errSecSuccess,
+          SecKeychainSetUserInteractionAllowed(false) == errSecSuccess
+        else { return nil }
+      }
+      defer {
+        if !allowInteraction {
+          SecKeychainSetUserInteractionAllowed(previousInteraction.boolValue)
+        }
+      }
 
       var result: AnyObject?
       let status = SecItemCopyMatching(query as CFDictionary, &result)

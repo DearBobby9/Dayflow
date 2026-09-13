@@ -13,6 +13,12 @@ final class ProvidersSettingsViewModel: ObservableObject {
     }
   }
   @Published var providerRoutingErrorMessage: String?
+  @Published private(set) var foundationModelsAvailability: FoundationModelsAvailability =
+    .requiresMacOS27
+  @Published var pendingPrimarySelection: LLMProviderID?
+  @Published var showKeepBackupConfirm = false
+  @Published var pendingSecondarySelection: LLMProviderID?
+  @Published var showBackupDataConfirm = false
 
   @Published var selectedGeminiModel: GeminiModel
   @Published var localEngine: LocalEngine {
@@ -158,7 +164,7 @@ final class ProvidersSettingsViewModel: ObservableObject {
       openAICompatibleModelID = configuration.modelID
     }
     openAICompatibleAPIKey =
-      KeychainManager.shared.retrieve(for: OpenAICompatiblePreferences.keychainProvider) ?? ""
+      KeychainManager.shared.retrieve(for: OpenAICompatiblePreferences.keychainProvider, allowInteraction: false) ?? ""
   }
 
   func handleOnAppear() {
@@ -176,6 +182,11 @@ final class ProvidersSettingsViewModel: ObservableObject {
     } else {
       loadAgentPromptOverridesIfNeeded()
     }
+    refreshFoundationModelsAvailability()
+  }
+
+  func refreshFoundationModelsAvailability() {
+    foundationModelsAvailability = FoundationModelsSupport.currentAvailability()
   }
 
   func handleLocalTestCompletion(success: Bool) {
@@ -232,7 +243,7 @@ final class ProvidersSettingsViewModel: ObservableObject {
     openAICompatibleBaseURL = configuration.baseURL
     openAICompatibleModelID = configuration.modelID
     openAICompatibleAPIKey =
-      KeychainManager.shared.retrieve(for: OpenAICompatiblePreferences.keychainProvider) ?? ""
+      KeychainManager.shared.retrieve(for: OpenAICompatiblePreferences.keychainProvider, allowInteraction: false) ?? ""
   }
 
   func refreshCLIReadiness() {
@@ -387,12 +398,19 @@ final class ProvidersSettingsViewModel: ObservableObject {
       savedGeminiModel = preference.primary
     case .dayflow:
       break
+    case .foundationModels:
+      break
     }
     let role = pendingSetupRole ?? .setupOnly
     let routingSucceeded: Bool
     switch role {
     case .primary:
-      routingSucceeded = assignPrimaryProvider(providerId, requiresReadinessCheck: false)
+      if providerId == .foundationModels, routing.secondary != nil {
+        requestAssignPrimaryProvider(providerId)
+        routingSucceeded = true
+      } else {
+        routingSucceeded = assignPrimaryProvider(providerId, requiresReadinessCheck: false)
+      }
     case .secondary:
       routingSucceeded = assignSecondaryProvider(providerId, requiresReadinessCheck: false)
     case .setupOnly:
@@ -418,7 +436,7 @@ final class ProvidersSettingsViewModel: ObservableObject {
     }
 
     if isProviderConfigured(providerId) {
-      assignPrimaryProvider(providerId)
+      requestAssignPrimaryProvider(providerId)
     } else {
       beginProviderSetup(providerId, role: .primary)
     }
@@ -432,10 +450,57 @@ final class ProvidersSettingsViewModel: ObservableObject {
     }
 
     if isProviderConfigured(providerId) {
-      assignSecondaryProvider(providerId)
+      requestAssignSecondaryProvider(providerId)
     } else {
       beginProviderSetup(providerId, role: .secondary)
     }
+  }
+
+  func requestAssignPrimaryProvider(_ providerId: LLMProviderID) {
+    guard providerId == .foundationModels, routing.secondary != nil else {
+      assignPrimaryProvider(providerId)
+      return
+    }
+    pendingPrimarySelection = providerId
+    showKeepBackupConfirm = true
+  }
+
+  func confirmKeepBackup() {
+    guard let providerId = pendingPrimarySelection else { return }
+    pendingPrimarySelection = nil
+    showKeepBackupConfirm = false
+    assignPrimaryProvider(providerId)
+  }
+
+  func confirmRemoveBackup() {
+    guard let providerId = pendingPrimarySelection else { return }
+    pendingPrimarySelection = nil
+    showKeepBackupConfirm = false
+    guard assignPrimaryProvider(providerId) else { return }
+    clearBackupProvider()
+  }
+
+  func cancelPendingSelection() {
+    pendingPrimarySelection = nil
+    pendingSecondarySelection = nil
+    showKeepBackupConfirm = false
+    showBackupDataConfirm = false
+  }
+
+  func requestAssignSecondaryProvider(_ providerId: LLMProviderID) {
+    guard routing.primary == .foundationModels else {
+      assignSecondaryProvider(providerId)
+      return
+    }
+    pendingSecondarySelection = providerId
+    showBackupDataConfirm = true
+  }
+
+  func confirmAssignSecondary() {
+    guard let providerId = pendingSecondarySelection else { return }
+    pendingSecondarySelection = nil
+    showBackupDataConfirm = false
+    assignSecondaryProvider(providerId)
   }
 
   @discardableResult
@@ -577,7 +642,7 @@ final class ProvidersSettingsViewModel: ObservableObject {
     case .dayflow:
       return isDayflowProActive
     case .gemini:
-      let key = KeychainManager.shared.retrieve(for: "gemini") ?? ""
+      let key = KeychainManager.shared.retrieve(for: "gemini", allowInteraction: false) ?? ""
       return !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     case .chatGPT:
       return codexCLIInstalled && LLMProviderSetupPreferences.isComplete(.chatGPT)
@@ -592,7 +657,7 @@ final class ProvidersSettingsViewModel: ObservableObject {
       }
       let key =
         KeychainManager.shared.retrieve(
-          for: OpenAICompatiblePreferences.keychainProvider) ?? ""
+          for: OpenAICompatiblePreferences.keychainProvider, allowInteraction: false) ?? ""
       return !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     case .local:
       let baseURL = (UserDefaults.standard.string(forKey: "llmLocalBaseURL") ?? "")
@@ -600,6 +665,8 @@ final class ProvidersSettingsViewModel: ObservableObject {
       let modelId = (UserDefaults.standard.string(forKey: "llmLocalModelId") ?? "")
         .trimmingCharacters(in: .whitespacesAndNewlines)
       return !baseURL.isEmpty && !modelId.isEmpty
+    case .foundationModels:
+      return FoundationModelsSupport.currentAvailability() == .available
     }
   }
 
@@ -739,6 +806,10 @@ final class ProvidersSettingsViewModel: ObservableObject {
         summary: String(localized: "Hosted cards & transcription • no API keys • requires Pro")
       ),
       CompactProviderInfo(
+        id: .foundationModels,
+        summary: String(localized: "On-device Apple model. Timeline only; nothing leaves this Mac.")
+      ),
+      CompactProviderInfo(
         id: .claude,
         summary: String(localized: "Uses Claude Code through your existing Claude plan")
       ),
@@ -788,6 +859,8 @@ final class ProvidersSettingsViewModel: ObservableObject {
     case .dayflow:
       return isDayflowProActive
         ? String(localized: "Dayflow Pro active") : String(localized: "Requires Dayflow Pro")
+    case .foundationModels:
+      return FoundationModelsSupport.currentAvailability().statusText
     }
   }
 
@@ -821,6 +894,8 @@ final class ProvidersSettingsViewModel: ObservableObject {
       return String(localized: "OpenAI-compatible API")
     case .dayflow:
       return String(localized: "Dayflow Backend")
+    case .foundationModels:
+      return String(localized: "On-device model")
     }
   }
 
@@ -832,7 +907,18 @@ final class ProvidersSettingsViewModel: ObservableObject {
     case .claude: return "Claude"
     case .openAICompatible: return "OpenAI-compatible"
     case .dayflow: return String(localized: "Dayflow Pro")
+    case .foundationModels: return "Apple Foundation Models"
     }
+  }
+
+  var backupCandidateDisplayName: String {
+    guard let secondary = routing.secondary else { return providerDisplayName(routing.primary) }
+    return providerDisplayName(secondary == .foundationModels ? routing.primary : secondary)
+  }
+
+  var pendingSecondaryDisplayName: String {
+    guard let providerId = pendingSecondarySelection else { return "" }
+    return providerDisplayName(providerId)
   }
 
   // Prompt override load/persist/reset lives in
@@ -851,6 +937,7 @@ struct CompactProviderInfo: Identifiable {
     case .claude: return "Claude"
     case .openAICompatible: return "OpenAI-compatible"
     case .dayflow: return String(localized: "Dayflow Pro")
+    case .foundationModels: return "Apple"
     }
   }
 }

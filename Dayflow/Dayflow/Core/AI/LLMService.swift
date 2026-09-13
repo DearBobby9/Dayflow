@@ -80,6 +80,17 @@ func selectTimelineProviderStartup<Context>(
   }
 }
 
+/// Cancellation isn't a provider failure: falling back to the backup provider
+/// would send screenshots to a second provider for work the user stopped.
+func shouldAttemptProviderBackup(after error: Error) -> Bool {
+  if error is CancellationError { return false }
+  let nsError = error as NSError
+  if nsError.domain == NSCocoaErrorDomain && nsError.code == NSUserCancelledError {
+    return false
+  }
+  return true
+}
+
 protocol LLMServicing {
   func processBatch(
     _ batchId: Int64, progressHandler: ((LLMProcessingStep) -> Void)?,
@@ -266,6 +277,24 @@ final class LLMService: LLMServicing {
           generateActivityCards: provider.generateActivityCards
         ), fallbackState: nil
       )
+    case .foundationModels:
+      if #available(macOS 27.0, *) {
+        let provider = FoundationModelsProvider()
+        return (
+          actions: BatchProviderActions(
+            transcribeScreenshots: provider.transcribeScreenshots,
+            generateActivityCards: provider.generateActivityCards
+          ), fallbackState: nil
+        )
+      } else {
+        throw NSError(
+          domain: "FoundationModelsProvider",
+          code: 2,
+          userInfo: [
+            NSLocalizedDescriptionKey: "Apple Foundation Models needs macOS 27 or later."
+          ]
+        )
+      }
     case .openAICompatible:
       guard let provider = makeOpenAICompatibleProvider() else { throw noProviderError() }
       return (
@@ -372,6 +401,7 @@ final class LLMService: LLMServicing {
       let usingBackup = activeContext.id != primaryContext.id
       return (value, activeContext, usingBackup)
     } catch {
+      guard shouldAttemptProviderBackup(after: error) else { throw error }
       guard activeContext.id == primaryContext.id, let backupContext else {
         throw error
       }
@@ -560,6 +590,24 @@ final class LLMService: LLMServicing {
         },
         generateTextStreaming: nil
       )
+    case .foundationModels:
+      if #available(macOS 27.0, *) {
+        let provider = FoundationModelsProvider()
+        return TextProviderActions(
+          generateText: { prompt in
+            try await provider.generateText(prompt: prompt)
+          },
+          generateTextStreaming: nil
+        )
+      } else {
+        throw NSError(
+          domain: "FoundationModelsProvider",
+          code: 2,
+          userInfo: [
+            NSLocalizedDescriptionKey: "Apple Foundation Models needs macOS 27 or later."
+          ]
+        )
+      }
     case .openAICompatible:
       guard let provider = makeOpenAICompatibleProvider() else { throw noProviderError() }
       return TextProviderActions(
@@ -1183,6 +1231,19 @@ final class LLMService: LLMServicing {
         case 11: return "The local AI couldn't identify any activities."
         case 12: return "The local AI didn't analyze enough of the video."
         case 13: return "The local AI generated too many segments."
+        default: break
+        }
+
+      case "FoundationModelsProvider":
+        switch nsError.code {
+        case 1, 8: return nsError.localizedDescription
+        case 2: return "Apple Foundation Models needs macOS 27 or later."
+        case 3: return "The on-device model's context budget was exceeded."
+        case 4: return "None of the screenshots in this batch could be decoded."
+        case 5: return "The on-device model declined to describe this content."
+        case 6: return "The on-device model produced cards that didn't pass validation."
+        case 7: return "The on-device model returned no observations for this batch."
+        case 9: return "The on-device model reported its context limit was reached."
         default: break
         }
 

@@ -88,6 +88,7 @@ enum LLMProviderID: String, Codable, CaseIterable {
   case claude
   case openAICompatible = "openai_compatible"
   case local
+  case foundationModels = "foundation_models"
 
   var analyticsName: String {
     switch self {
@@ -101,6 +102,8 @@ enum LLMProviderID: String, Codable, CaseIterable {
       return "openai_compatible"
     case .local:
       return "ollama"
+    case .foundationModels:
+      return "apple_foundation_models"
     }
   }
 
@@ -113,6 +116,7 @@ enum LLMProviderID: String, Codable, CaseIterable {
     case .openAICompatible: return "openai_compatible"
     case .local:
       return "local"
+    case .foundationModels: return "foundation_models"
     }
   }
 }

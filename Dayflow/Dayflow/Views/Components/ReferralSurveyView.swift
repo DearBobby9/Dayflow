@@ -35,8 +35,12 @@ struct ReferralSurveyView: View {
       _selectedReferral = selectedReferral
       _customReferral = customReferral
     } else {
-      _selectedReferral = _internalSelectedReferral.projectedValue
-      _customReferral = _internalCustomReferral.projectedValue
+      let internalSelectedReferral = State<ReferralOption?>(initialValue: nil)
+      let internalCustomReferral = State<String>(initialValue: "")
+      _internalSelectedReferral = internalSelectedReferral
+      _internalCustomReferral = internalCustomReferral
+      _selectedReferral = internalSelectedReferral.projectedValue
+      _customReferral = internalCustomReferral.projectedValue
     }
   }
 

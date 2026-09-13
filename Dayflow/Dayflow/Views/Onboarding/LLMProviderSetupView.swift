@@ -29,6 +29,8 @@ struct LLMProviderSetupView: View {
       return String(localized: "Gemini")
     case .dayflow:
       return String(localized: "Dayflow Pro")
+    case .foundationModels:
+      return String(localized: "Apple Foundation Models")
     }
   }
 

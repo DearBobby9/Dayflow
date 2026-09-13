@@ -24,6 +24,7 @@ enum TimelineFailureKind: String {
   case accountBlocked = "account_blocked"
   case modelMisconfigured = "model_misconfigured"
   case notConfigured = "not_configured"
+  case foundationModelsUnavailable = "foundation_models_unavailable"
 
   // Non-actionable: retrying usually resolves these without the user.
   case transient = "transient"
@@ -176,6 +177,14 @@ struct TimelineFailureClassification {
         destination: .providers
       )
 
+    case .foundationModelsUnavailable:
+      return TimelineFailureToastContent(
+        title: "Apple Intelligence isn't available",
+        body:
+          "Dayflow can't reach the on-device model. Turn on Apple Intelligence in System Settings, or pick another provider in provider settings.",
+        destination: .providers
+      )
+
     case .transient, .modelFlaky, .unknown:
       return nil
     }
@@ -199,6 +208,7 @@ struct TimelineFailureClassification {
     case "claude": return String(localized: "Claude")
     case "local", "ollama": return String(localized: "Ollama/LM Studio")
     case "dayflow": return String(localized: "Dayflow")
+    case "foundation_models": return "Apple Foundation Models"
     default: return label
     }
   }
@@ -272,6 +282,7 @@ enum TimelineFailureClassifier {
     (.geoBlocked, ["location is not supported"]),
     (.accountBlocked, ["denied access"]),
     (.notConfigured, ["no llm provider configured"]),
+    (.foundationModelsUnavailable, ["apple intelligence isn't available", "needs macos 27"]),
     (.modelMisconfigured, ["is not found for api version", "not_found_error"]),
     (
       .transient,

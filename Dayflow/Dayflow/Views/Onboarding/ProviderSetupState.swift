@@ -200,6 +200,28 @@ class ProviderSetupState: ObservableObject {
             String(localized: "All set!"),
             String(localized: "Gemini is now configured and ready to use with Dayflow."))),
       ]
+    case .foundationModels:
+      steps = [
+        SetupStep(
+          id: "intro",
+          title: String(localized: "Before you begin"),
+          contentType: .information(
+            String(localized: "Apple Foundation Models"),
+            String(
+              localized:
+                "Dayflow will analyze your screenshots with the on-device Apple model. Nothing is uploaded. Requires macOS 27 with Apple Intelligence turned on."
+            )
+          )
+        ),
+        SetupStep(
+          id: "complete",
+          title: String(localized: "Complete"),
+          contentType: .information(
+            String(localized: "All set!"),
+            String(localized: "Apple Foundation Models is ready to build your timeline.")
+          )
+        ),
+      ]
     }
   }
 

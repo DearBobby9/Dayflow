@@ -44,6 +44,31 @@ struct SettingsProvidersTabView: View {
         agentPromptCustomizationSection
       }
     }
+    .alert(
+      "Keep \(viewModel.backupCandidateDisplayName) as backup?",
+      isPresented: $viewModel.showKeepBackupConfirm
+    ) {
+      Button("Keep \(viewModel.backupCandidateDisplayName)") { viewModel.confirmKeepBackup() }
+      Button("Remove backup", role: .destructive) { viewModel.confirmRemoveBackup() }
+      Button("Cancel", role: .cancel) { viewModel.cancelPendingSelection() }
+    } message: {
+      let name = viewModel.backupCandidateDisplayName
+      Text(
+        "If the on-device model fails, Dayflow would send screenshots and observations to \(name)."
+      )
+    }
+    .alert(
+      "Add \(viewModel.pendingSecondaryDisplayName) as backup?",
+      isPresented: $viewModel.showBackupDataConfirm
+    ) {
+      Button("Add backup") { viewModel.confirmAssignSecondary() }
+      Button("Cancel", role: .cancel) { viewModel.cancelPendingSelection() }
+    } message: {
+      let name = viewModel.pendingSecondaryDisplayName
+      Text(
+        "If the on-device model fails, Dayflow would send screenshots and observations to \(name)."
+      )
+    }
   }
 
   // MARK: - Current configuration
@@ -123,7 +148,7 @@ struct SettingsProvidersTabView: View {
       }
       SettingsRow(label: String(localized: "API key"), showsDivider: false) {
         SettingsMetadata(
-          text: KeychainManager.shared.retrieve(for: "gemini") != nil
+          text: KeychainManager.shared.retrieve(for: "gemini", allowInteraction: false) != nil
             ? String(localized: "Stored safely in Keychain") : String(localized: "Not set"))
       }
     case .chatGPT, .claude:
@@ -156,6 +181,17 @@ struct SettingsProvidersTabView: View {
       SettingsRow(label: String(localized: "Status"), showsDivider: false) {
         SettingsMetadata(
           text: viewModel.statusText(for: .dayflow) ?? String(localized: "Requires Dayflow Pro"))
+      }
+    case .foundationModels:
+      SettingsRow(label: String(localized: "Model")) {
+        SettingsMetadata(text: String(localized: "Apple on-device model"))
+      }
+      SettingsRow(label: String(localized: "Scope")) {
+        SettingsMetadata(
+          text: String(localized: "Timeline only. Daily and Chat use their own provider settings."))
+      }
+      SettingsRow(label: String(localized: "Status"), showsDivider: false) {
+        SettingsMetadata(text: viewModel.foundationModelsAvailability.statusText)
       }
     }
   }
@@ -216,6 +252,21 @@ struct SettingsProvidersTabView: View {
           Text("Hosted cards and transcription run through your Dayflow account.")
             .font(.custom("Figtree", size: 13))
             .foregroundColor(SettingsStyle.secondary)
+        case .foundationModels:
+          VStack(alignment: .leading, spacing: 10) {
+            Text("Runs entirely on this Mac. No endpoint or API key.")
+              .font(.custom("Figtree", size: 12))
+              .foregroundColor(SettingsStyle.secondary)
+              .fixedSize(horizontal: false, vertical: true)
+            Text(viewModel.foundationModelsAvailability.statusText)
+              .font(.custom("Figtree", size: 13))
+              .foregroundColor(SettingsStyle.secondary)
+            SettingsSecondaryButton(
+              title: String(localized: "Refresh status"), systemImage: "arrow.clockwise"
+            ) {
+              viewModel.refreshFoundationModelsAvailability()
+            }
+          }
         }
       }
     }
@@ -454,7 +505,7 @@ struct SettingsProvidersTabView: View {
         ],
         onReset: viewModel.resetOllamaPromptOverrides
       )
-    case .dayflow, .chatGPT, .claude, .openAICompatible:
+    case .dayflow, .chatGPT, .claude, .openAICompatible, .foundationModels:
       EmptyView()
     }
   }
