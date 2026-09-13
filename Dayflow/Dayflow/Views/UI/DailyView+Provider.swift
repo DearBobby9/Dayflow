@@ -80,7 +80,7 @@ extension DailyView {
             .font(.custom("InstrumentSerif-Regular", size: 22 * scale))
             .foregroundStyle(theme.textPrimary)
 
-          Text("Choose how Daily generates this recap, or turn generation off.")
+          Text("Choose a provider for Daily, separately from Timeline, or turn recap generation off.")
             .font(.custom("Figtree-Regular", size: 12 * scale))
             .foregroundStyle(theme.textSecondary)
         }

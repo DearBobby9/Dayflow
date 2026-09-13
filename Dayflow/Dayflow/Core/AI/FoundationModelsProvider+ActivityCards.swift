@@ -52,8 +52,9 @@ extension FoundationModelsProvider {
   func generateActivityCards(
     observations: [Observation], context: ActivityGenerationContext, batchId: Int64?
   ) async throws -> (cards: [ActivityCardData], log: LLMCall) {
-    guard Self.availability() == .available else {
-      throw Self.makeError(code: 1, message: Self.availability().statusText)
+    let availability = modelAvailability()
+    guard availability == .available else {
+      throw Self.makeError(code: 1, message: availability.statusText)
     }
     let startedAt = Date()
     let actions = CardGenerationActions(

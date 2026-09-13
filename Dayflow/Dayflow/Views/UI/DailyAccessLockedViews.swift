@@ -130,7 +130,7 @@ struct DailyProviderOnboardingView: View {
             .multilineTextAlignment(.center)
 
           Text(
-            "Choose how Daily generates your recap, or turn generation off. You can change this later."
+            "Choose a provider for Daily, separately from Timeline, or turn recap generation off."
           )
           .font(.custom("Figtree-Regular", size: 13))
           .foregroundColor(theme.textSecondary)

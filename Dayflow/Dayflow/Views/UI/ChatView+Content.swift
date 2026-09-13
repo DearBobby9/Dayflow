@@ -505,6 +505,11 @@ extension ChatView {
           .font(.custom("Figtree-SemiBold", size: 14))
           .foregroundColor(theme.textPrimary)
           .multilineTextAlignment(.center)
+
+        Text("Chat uses a separate provider from Timeline.")
+          .font(.custom("Figtree-Regular", size: 13))
+          .foregroundColor(theme.textSecondary)
+          .multilineTextAlignment(.center)
       }
 
       // Main content card
@@ -735,6 +740,14 @@ extension ChatView {
       .padding(.horizontal, 12)
       .padding(.vertical, 9)
       .frame(minHeight: 48)
+
+      Text("Chat uses the provider selected here, independently of your Timeline settings.")
+        .font(.custom("Figtree", size: 11))
+        .foregroundColor(theme.textMuted)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 10)
     }
     .background(
       RoundedRectangle(cornerRadius: 16, style: .continuous)

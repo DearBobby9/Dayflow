@@ -145,6 +145,7 @@ struct LLMProviderSetupView: View {
 
   var nextButtonText: String {
     if ["verify", "test"].contains(setupState.currentStep.id) && !setupState.testSuccessful {
+      if providerType == .foundationModels { return String(localized: "Not ready") }
       return String(localized: "Test Required")
     }
     return String(localized: "Next")
@@ -471,7 +472,20 @@ struct LLMProviderSetupView: View {
         ScrollView(.vertical, showsIndicators: true) {
           VStack(alignment: .leading, spacing: 16) {
             if ["verify", "test"].contains(step.id) {
-              if providerType == .gemini {
+              if providerType == .foundationModels {
+                Label(
+                  setupState.foundationModelsAvailability.statusText,
+                  systemImage: setupState.testSuccessful ? "checkmark.circle.fill" : "exclamationmark.circle"
+                )
+                .font(.custom("Figtree", size: 16))
+                .foregroundColor(Color(hex: "333333"))
+                .onAppear { setupState.refreshFoundationModelsAvailability() }
+
+                Button("Refresh status") {
+                  setupState.refreshFoundationModelsAvailability()
+                }
+                .buttonStyle(.bordered)
+              } else if providerType == .gemini {
                 TestConnectionView(
                   apiKey: setupState.apiKey,
                   model: setupState.geminiModel,
@@ -709,9 +723,13 @@ struct LLMProviderSetupView: View {
   @discardableResult
   func saveConfiguration() -> Bool {
     setupState.saveErrorMessage = nil
+    if providerType == .foundationModels {
+      setupState.refreshFoundationModelsAvailability()
+    }
     guard setupState.testSuccessful else {
-      setupState.saveErrorMessage = String(
-        localized: "Test this provider successfully before completing setup.")
+      setupState.saveErrorMessage = providerType == .foundationModels
+        ? setupState.foundationModelsAvailability.statusText
+        : String(localized: "Test this provider successfully before completing setup.")
       return false
     }
 

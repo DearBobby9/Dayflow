@@ -17,6 +17,8 @@ final class FoundationModelsSettingsTests: XCTestCase {
     "claudeSetupComplete",
     "geminiSelectedModel_v3",
     "geminiSelectedModel_v4",
+    "dailyRecapProvider_v1",
+    "dashboardChatProvider",
     LLMProviderRoutingStore.storageKey,
   ]
 
@@ -46,6 +48,44 @@ final class FoundationModelsSettingsTests: XCTestCase {
       LLMProviderRouting(primary: primary, secondary: secondary),
       to: .standard
     )
+  }
+
+  func testAppleSetupRequiresReadinessCheckAfterIntroduction() {
+    let state = ProviderSetupState()
+    state.configureSteps(for: .foundationModels)
+
+    state.goNext()
+
+    XCTAssertFalse(state.canContinue, "Apple setup must check readiness before reaching completion")
+  }
+
+  func testAppleSetupHandlesReadinessLossAndRecovery() {
+    let state = ProviderSetupState()
+    state.configureSteps(for: .foundationModels)
+    state.goNext()
+
+    state.refreshFoundationModelsAvailability(.modelNotReady)
+    XCTAssertFalse(state.canContinue)
+
+    state.refreshFoundationModelsAvailability(.available)
+    XCTAssertTrue(state.canContinue)
+
+    state.refreshFoundationModelsAvailability(.appleIntelligenceNotEnabled)
+    XCTAssertFalse(state.canContinue)
+    XCTAssertFalse(state.testSuccessful)
+  }
+
+  func testSwitchingTimelineToApplePreservesDailyAndChatSelections() throws {
+    try seedRouting(primary: .gemini)
+    DailyRecapProvider.claude.save()
+    UserDefaults.standard.set(DashboardChatProvider.codex.rawValue, forKey: "dashboardChatProvider")
+    let viewModel = ProvidersSettingsViewModel()
+    viewModel.loadRouting()
+
+    XCTAssertTrue(viewModel.assignPrimaryProvider(.foundationModels, requiresReadinessCheck: false))
+
+    XCTAssertEqual(DailyRecapProvider.load(), .claude)
+    XCTAssertEqual(UserDefaults.standard.string(forKey: "dashboardChatProvider"), "codex")
   }
 
   func testRequestPrimaryFoundationModelsWithSecondaryDefersAndSetsFlag() throws {

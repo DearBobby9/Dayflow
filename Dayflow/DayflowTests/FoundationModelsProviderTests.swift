@@ -1,9 +1,154 @@
+import AppKit
+import FoundationModels
 import XCTest
 
 @testable import Dayflow
 
 @available(macOS 27.0, *)
 final class FoundationModelsProviderTests: XCTestCase {
+  private func makeScreenshots(count: Int) throws -> [Screenshot] {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "FoundationModelsRetryTests-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+    let image = try XCTUnwrap(NSBitmapImageRep(
+      bitmapDataPlanes: nil, pixelsWide: 16, pixelsHigh: 16, bitsPerSample: 8,
+      samplesPerPixel: 3, hasAlpha: false, isPlanar: false, colorSpaceName: .deviceRGB,
+      bytesPerRow: 0, bitsPerPixel: 0))
+    let jpeg = try XCTUnwrap(image.representation(using: .jpeg, properties: [:]))
+    return try (0..<count).map { index in
+      let url = directory.appendingPathComponent("frame-\(index).jpg")
+      try jpeg.write(to: url)
+      return Screenshot(id: Int64(index), capturedAt: 1000 + index * 60,
+        filePath: url.path, fileSize: nil, idleSecondsAtCapture: nil, isDeleted: false)
+    }
+  }
+
+  func testTranscriptionRetriesOnceAndReturnsRecoveredResult() async throws {
+    let screenshots = try makeScreenshots(count: 1)
+    var calls = 0
+    let provider = FoundationModelsProvider(logsCalls: false, modelAvailability: { .available }) {
+      _, _, _, _ in
+      calls += 1
+      if calls == 1 {
+        throw LanguageModelError.rateLimited(.init(resetDate: nil, debugDescription: "Temporary failure"))
+      }
+      return .init(app: "Xcode", activity: "Read code", evidence: "Swift file")
+    }
+    let result = try await provider.transcribeScreenshots(
+      screenshots, batchStartTime: screenshots[0].capturedDate, batchId: 7)
+    XCTAssertEqual(calls, 2)
+    XCTAssertEqual(result.observations.count, 1)
+    XCTAssertTrue(result.observations[0].observation.contains("Read code"))
+  }
+
+  func testTranscriptionExhaustsExactlyTwoAttemptsBeforeReturningFailure() async throws {
+    let screenshots = try makeScreenshots(count: 1)
+    var calls = 0
+    let provider = FoundationModelsProvider(logsCalls: false, modelAvailability: { .available }) {
+      _, _, _, _ in
+      calls += 1
+      throw FoundationModelsProvider.makeError(code: 10, message: "Temporary model failure")
+    }
+    do {
+      _ = try await provider.transcribeScreenshots(
+        screenshots, batchStartTime: screenshots[0].capturedDate, batchId: 7)
+      XCTFail("The existing backup path needs an error after both Apple attempts fail")
+    } catch let error as NSError {
+      XCTAssertEqual(error.domain, FoundationModelsProvider.errorDomain)
+      XCTAssertEqual(error.code, 10)
+    }
+    XCTAssertEqual(calls, 2)
+  }
+
+  func testSelectedMissingFrameFailsBothAttemptsBeforeModelInference() async throws {
+    let screenshots = try makeScreenshots(count: 2)
+    try FileManager.default.removeItem(at: screenshots[1].fileURL)
+    var attempts = 0
+    var modelCalls = 0
+    let provider = FoundationModelsProvider(logsCalls: false, modelAvailability: {
+      attempts += 1
+      return .available
+    }) { _, _, _, _ in
+      modelCalls += 1
+      return .init(app: "Xcode", activity: "Read code", evidence: "Swift file")
+    }
+    do {
+      _ = try await provider.transcribeScreenshots(
+        screenshots, batchStartTime: screenshots[0].capturedDate, batchId: 7)
+      XCTFail("A missing selected frame must not become a partially successful transcription")
+    } catch let error as NSError {
+      XCTAssertEqual(error.domain, FoundationModelsProvider.errorDomain)
+      XCTAssertEqual(error.code, 4)
+    }
+    XCTAssertEqual(attempts, 2)
+    XCTAssertEqual(modelCalls, 0)
+  }
+
+  func testPartialModelRefusalDoesNotReturnSuccessfulObservations() async throws {
+    let screenshots = try makeScreenshots(count: 2)
+    let failures: [LanguageModelError] = [
+      .refusal(.init(explanation: "Unavailable", debugDescription: "Test refusal")),
+      .guardrailViolation(.init(debugDescription: "Test guardrail")),
+    ]
+    for failure in failures {
+      var calls = 0
+      let provider = FoundationModelsProvider(logsCalls: false, modelAvailability: { .available }) {
+        _, _, _, _ in
+        calls += 1
+        if calls.isMultiple(of: 2) { throw failure }
+        return .init(app: "Xcode", activity: "Read code", evidence: "Swift file")
+      }
+      do {
+        _ = try await provider.transcribeScreenshots(
+          screenshots, batchStartTime: screenshots[0].capturedDate, batchId: 7)
+        XCTFail("Refusal after a successful frame must still fail the transcription")
+      } catch let error as NSError {
+        XCTAssertEqual(error.domain, FoundationModelsProvider.errorDomain)
+        XCTAssertEqual(error.code, 5)
+      }
+      XCTAssertEqual(calls, 4)
+    }
+  }
+
+  func testTranscriptionCancellationDoesNotRetryOrBecomeProviderFailure() async throws {
+    let screenshots = try makeScreenshots(count: 1)
+    let cancellations: [Error] = [CancellationError(),
+      NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError)]
+    for cancellation in cancellations {
+      var calls = 0
+      let provider = FoundationModelsProvider(logsCalls: false, modelAvailability: { .available }) {
+        _, _, _, _ in
+        calls += 1
+        throw cancellation
+      }
+      do {
+        _ = try await provider.transcribeScreenshots(
+          screenshots, batchStartTime: screenshots[0].capturedDate, batchId: 7)
+        XCTFail("Expected cancellation")
+      } catch {
+        XCTAssertFalse(shouldAttemptProviderBackup(after: error))
+      }
+      XCTAssertEqual(calls, 1)
+    }
+  }
+
+  func testUnselectedMissingFrameDoesNotFailOrRetrySuccessfulTranscription() async throws {
+    let screenshots = try makeScreenshots(count: 17)
+    // Index 8 lies between the 16 evenly spaced samples and is intentionally not selected.
+    try FileManager.default.removeItem(at: screenshots[8].fileURL)
+    var calls = 0
+    let provider = FoundationModelsProvider(logsCalls: false, modelAvailability: { .available }) {
+      _, _, _, _ in
+      calls += 1
+      return .init(app: "Xcode", activity: "Read code", evidence: "Swift file")
+    }
+    let result = try await provider.transcribeScreenshots(
+      screenshots, batchStartTime: screenshots[0].capturedDate, batchId: 7)
+    XCTAssertEqual(calls, 16)
+    XCTAssertEqual(result.observations.count, 16)
+  }
+
   func testInferenceDeadlineCancelsCallAndReleasesQueue() async throws {
     let gate = FoundationModelsInferenceGate()
     do {

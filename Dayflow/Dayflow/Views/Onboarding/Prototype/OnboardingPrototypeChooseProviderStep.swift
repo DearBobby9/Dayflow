@@ -106,6 +106,14 @@ struct OnboardingPrototypeChooseProviderStep: View {
       notes: String(localized: "Uses OpenRouter or any OpenAI-compatible endpoint.")
     ),
     ComparisonProvider(
+      providerID: .foundationModels,
+      title: String(localized: "Apple on-device"),
+      accuracy: RatedValue(text: String(localized: "Varies"), rating: .medium),
+      subscription: String(localized: "Free"),
+      ease: RatedValue(text: String(localized: "Built in"), rating: .best),
+      notes: String(localized: "Timeline only. Requires macOS 27 and Apple Intelligence.")
+    ),
+    ComparisonProvider(
       providerID: .local,
       title: String(localized: "Local AI"),
       accuracy: RatedValue(text: String(localized: "Decent"), rating: .basic),
@@ -118,7 +126,7 @@ struct OnboardingPrototypeChooseProviderStep: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      Text("Choose a way to run Dayflow")
+      Text("Choose how to generate your timeline")
         .font(.custom("InstrumentSerif-Regular", size: 40))
         .tracking(-1.2)
         .multilineTextAlignment(.center)
@@ -150,8 +158,12 @@ struct OnboardingPrototypeChooseProviderStep: View {
         .padding(.horizontal, 112)
         .transition(.opacity)
       } else {
-        comparisonTable
-          .padding(.horizontal, 40)
+        ScrollView(.horizontal) {
+          comparisonTable
+            .frame(minWidth: 1120)
+        }
+          .fixedSize(horizontal: false, vertical: true)
+          .padding(.horizontal, 24)
           .transition(.opacity)
       }
 
@@ -393,5 +405,6 @@ struct OnboardingPrototypeChooseProviderStep: View {
       showOverlayStroke: false,
       innerGlowColor: Color(hex: "FFDCCB").opacity(0.9)
     )
+    .accessibilityLabel(Text("Select \(provider.title)"))
   }
 }

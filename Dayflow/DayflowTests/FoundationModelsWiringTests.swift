@@ -98,7 +98,7 @@ final class FoundationModelsWiringTests: XCTestCase {
   func testClassifierDoesNotMisrouteProviderErrorMessages() {
     let cases: [(Int, String)] = [
       (3, "The on-device model's context budget was exceeded."),
-      (4, "None of the screenshots in this batch could be decoded."),
+      (4, "Some selected screenshots could not be decoded. Please retry this batch."),
       (5, "The on-device model declined to describe this content."),
       (6, "The on-device model produced cards that didn't pass validation."),
       (7, "The on-device model returned no observations for this batch."),

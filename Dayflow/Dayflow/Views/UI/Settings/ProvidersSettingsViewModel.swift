@@ -807,7 +807,7 @@ final class ProvidersSettingsViewModel: ObservableObject {
       ),
       CompactProviderInfo(
         id: .foundationModels,
-        summary: String(localized: "On-device Apple model. Timeline only; nothing leaves this Mac.")
+        summary: String(localized: "On-device timeline generation. Daily and Chat are configured separately.")
       ),
       CompactProviderInfo(
         id: .claude,

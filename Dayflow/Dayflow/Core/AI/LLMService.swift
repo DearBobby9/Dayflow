@@ -1239,7 +1239,7 @@ final class LLMService: LLMServicing {
         case 1, 8: return nsError.localizedDescription
         case 2: return "Apple Foundation Models needs macOS 27 or later."
         case 3: return "The on-device model's context budget was exceeded."
-        case 4: return "None of the screenshots in this batch could be decoded."
+        case 4: return "Some selected screenshots could not be decoded. Please retry this batch."
         case 5: return "The on-device model declined to describe this content."
         case 6: return "The on-device model produced cards that didn't pass validation."
         case 7: return "The on-device model returned no observations for this batch."

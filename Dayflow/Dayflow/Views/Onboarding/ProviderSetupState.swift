@@ -11,6 +11,7 @@ class ProviderSetupState: ObservableObject {
   @Published var saveErrorMessage: String?
   @Published var hasTestedConnection: Bool = false
   @Published var testSuccessful: Bool = false
+  @Published private(set) var foundationModelsAvailability: FoundationModelsAvailability = .modelNotReady
   @Published var geminiModel: GeminiModel
   // Local engine configuration
   @Published var localEngine: LocalEngine
@@ -66,7 +67,8 @@ class ProviderSetupState: ObservableObject {
       openAICompatibleModelID = configuration.modelID
     }
     openAICompatibleAPIKey =
-      KeychainManager.shared.retrieve(for: OpenAICompatiblePreferences.keychainProvider) ?? ""
+      KeychainManager.shared.retrieve(
+        for: OpenAICompatiblePreferences.keychainProvider, allowInteraction: false) ?? ""
   }
 
   var currentStep: SetupStep {
@@ -209,20 +211,37 @@ class ProviderSetupState: ObservableObject {
             String(localized: "Apple Foundation Models"),
             String(
               localized:
-                "Dayflow will analyze your screenshots with the on-device Apple model. Nothing is uploaded. Requires macOS 27 with Apple Intelligence turned on."
+                "Apple analyzes screenshots and generates your timeline on this Mac. Daily and Chat use separate providers. Requires macOS 27 with Apple Intelligence turned on."
             )
+          )
+        ),
+        SetupStep(
+          id: "verify",
+          title: String(localized: "Check availability"),
+          contentType: .information(
+            String(localized: "Apple Intelligence status"),
+            String(localized: "Apple Intelligence must be ready before it can generate your timeline.")
           )
         ),
         SetupStep(
           id: "complete",
           title: String(localized: "Complete"),
           contentType: .information(
-            String(localized: "All set!"),
-            String(localized: "Apple Foundation Models is ready to build your timeline.")
+            String(localized: "Finish Timeline setup"),
+            String(localized: "Apple will generate your timeline. Daily and Chat keep their own provider settings.")
           )
         ),
       ]
     }
+  }
+
+  func refreshFoundationModelsAvailability(
+    _ availability: FoundationModelsAvailability = FoundationModelsSupport.currentAvailability()
+  ) {
+    foundationModelsAvailability = availability
+    hasTestedConnection = true
+    testSuccessful = availability == .available
+    saveErrorMessage = nil
   }
 
   private func chatCLISteps(for provider: LLMProviderID) -> [SetupStep] {

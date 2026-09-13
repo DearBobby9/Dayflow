@@ -35,11 +35,21 @@ enum FoundationModelsSupport {
 
 @available(macOS 27.0, *)
 final class FoundationModelsProvider: ChatGPTTimelinePromptSupporting {
+  typealias FrameDescriber = (CGImage, CGImage?, String, String) async throws -> FrameObservation
+
   /// logsCalls=false 只供测试：跳过 LLMLogger（否则会经 StorageManager.shared 写 llm_calls）。
   private let logsCalls: Bool
+  let modelAvailability: () -> FoundationModelsAvailability
+  private let frameDescriber: FrameDescriber
 
-  init(logsCalls: Bool = true) {
+  init(
+    logsCalls: Bool = true,
+    modelAvailability: @escaping () -> FoundationModelsAvailability = FoundationModelsProvider.availability,
+    frameDescriber: @escaping FrameDescriber = FoundationModelsProvider.describeFrame
+  ) {
     self.logsCalls = logsCalls
+    self.modelAvailability = modelAvailability
+    self.frameDescriber = frameDescriber
   }
 
   static let providerRawValue = "foundation_models"
@@ -152,7 +162,7 @@ final class FoundationModelsProvider: ChatGPTTimelinePromptSupporting {
     case 3:
       return "The on-device model's context budget was exceeded."
     case 4:
-      return "None of the screenshots in this batch could be decoded."
+      return "Some selected screenshots could not be decoded. Please retry this batch."
     case 5:
       return "The on-device model declined to describe this content."
     case 6:
@@ -192,8 +202,26 @@ final class FoundationModelsProvider: ChatGPTTimelinePromptSupporting {
   func transcribeScreenshots(
     _ screenshots: [Screenshot], batchStartTime: Date, batchId: Int64?
   ) async throws -> (observations: [Observation], log: LLMCall) {
+    try Task.checkCancellation()
+    do {
+      return try await transcribeScreenshotsOnce(
+        screenshots, batchStartTime: batchStartTime, batchId: batchId, attempt: 1)
+    } catch {
+      guard shouldAttemptProviderBackup(after: error) else { throw error }
+    }
+
+    // Exhaust the Apple retry before LLMService can use the configured backup.
+    // Start from the same samples so observations from a failed attempt never escape.
+    try Task.checkCancellation()
+    return try await transcribeScreenshotsOnce(
+      screenshots, batchStartTime: batchStartTime, batchId: batchId, attempt: 2)
+  }
+
+  private func transcribeScreenshotsOnce(
+    _ screenshots: [Screenshot], batchStartTime: Date, batchId: Int64?, attempt: Int
+  ) async throws -> (observations: [Observation], log: LLMCall) {
     _ = batchStartTime
-    let availability = Self.availability()
+    let availability = modelAvailability()
     guard availability == .available else {
       throw Self.makeError(
         code: 1,
@@ -212,23 +240,24 @@ final class FoundationModelsProvider: ChatGPTTimelinePromptSupporting {
     let instructions = screenshotInstructions()
     var decodedFrames: [(screenshot: Screenshot, image: CGImage, header: String, headerImage: CGImage?)] = []
     for screenshot in sampled {
-      if let fullImage = screenshot.loadCGImage(),
-        let image = FrameStore.downscaled(fullImage, maxPixelSize: Self.maxPixelSize) {
-        let header = ScreenshotHeaderOCR.text(in: fullImage)
-        decodedFrames.append((screenshot, image, header, ScreenshotHeaderOCR.crop(from: fullImage)))
+      try Task.checkCancellation()
+      guard let fullImage = screenshot.loadCGImage(),
+        let image = FrameStore.downscaled(fullImage, maxPixelSize: Self.maxPixelSize) else {
+        let error = Self.makeError(code: 4, message: Self.errorMessage(code: 4, detail: ""))
+        logFailure(batchId: batchId, operation: "transcribe", attempt: attempt,
+          startedAt: callStart, error: error)
+        throw error
       }
-    }
-    guard !decodedFrames.isEmpty else {
-      throw Self.makeError(code: 4, message: Self.errorMessage(code: 4, detail: ""))
+      let header = ScreenshotHeaderOCR.text(in: fullImage)
+      decodedFrames.append((screenshot, image, header, ScreenshotHeaderOCR.crop(from: fullImage)))
     }
 
     var frameResults: [(capturedAt: Int, text: String)] = []
-    var refusedCount = 0
     for frame in decodedFrames {
+      try Task.checkCancellation()
       let frameStart = Date()
       do {
-        let content = try await Self.describeFrame(image: frame.image, headerImage: frame.headerImage,
-          headerText: frame.header, instructions: instructions)
+        let content = try await frameDescriber(frame.image, frame.headerImage, frame.header, instructions)
         let text = Self.observationText(
           app: content.app,
           activity: content.activity,
@@ -238,7 +267,7 @@ final class FoundationModelsProvider: ChatGPTTimelinePromptSupporting {
         logSuccess(
           batchId: batchId,
           operation: "transcribe",
-          attempt: 1,
+          attempt: attempt,
           startedAt: frameStart,
           response: text
         )
@@ -249,7 +278,7 @@ final class FoundationModelsProvider: ChatGPTTimelinePromptSupporting {
           logFailure(
             batchId: batchId,
             operation: "transcribe",
-            attempt: 1,
+            attempt: attempt,
             startedAt: frameStart,
             error: error
           )
@@ -259,31 +288,29 @@ final class FoundationModelsProvider: ChatGPTTimelinePromptSupporting {
           )
         }
         if case .guardrailViolation = error {
-          refusedCount += 1
           logFailure(
             batchId: batchId,
             operation: "transcribe",
-            attempt: 1,
+            attempt: attempt,
             startedAt: frameStart,
             error: error
           )
-          continue
+          throw Self.makeError(code: 5, message: Self.errorMessage(code: 5, detail: ""))
         }
         if case .refusal = error {
-          refusedCount += 1
           logFailure(
             batchId: batchId,
             operation: "transcribe",
-            attempt: 1,
+            attempt: attempt,
             startedAt: frameStart,
             error: error
           )
-          continue
+          throw Self.makeError(code: 5, message: Self.errorMessage(code: 5, detail: ""))
         }
         logFailure(
           batchId: batchId,
           operation: "transcribe",
-          attempt: 1,
+          attempt: attempt,
           startedAt: frameStart,
           error: error
         )
@@ -292,14 +319,15 @@ final class FoundationModelsProvider: ChatGPTTimelinePromptSupporting {
           message: Self.errorMessage(code: 8, detail: Self.caseName(of: error))
         )
       } catch let error as NSError where error.domain == Self.errorDomain {
-        logFailure(batchId: batchId, operation: "transcribe", attempt: 1,
+        logFailure(batchId: batchId, operation: "transcribe", attempt: attempt,
           startedAt: frameStart, error: error)
         throw error
       } catch {
+        guard shouldAttemptProviderBackup(after: error) else { throw error }
         logFailure(
           batchId: batchId,
           operation: "transcribe",
-          attempt: 1,
+          attempt: attempt,
           startedAt: frameStart,
           error: error
         )
@@ -310,13 +338,11 @@ final class FoundationModelsProvider: ChatGPTTimelinePromptSupporting {
       }
     }
 
-    if frameResults.isEmpty, refusedCount > 0 {
-      throw Self.makeError(code: 5, message: Self.errorMessage(code: 5, detail: ""))
-    }
     guard !frameResults.isEmpty else {
       throw Self.makeError(code: 7, message: Self.errorMessage(code: 7, detail: ""))
     }
 
+    try Task.checkCancellation()
     let observations = Self.observations(from: frameResults, batchId: batchId ?? -1)
     let output = observations.map(\.observation).joined(separator: "\n")
     return (

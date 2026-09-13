@@ -75,8 +75,8 @@ struct SettingsProvidersTabView: View {
 
   private var currentConfigurationSection: some View {
     SettingsSection(
-      title: String(localized: "Current configuration"),
-      subtitle: String(localized: "Active provider and runtime details.")
+      title: String(localized: "Timeline configuration"),
+      subtitle: String(localized: "Choose how screenshots become timeline cards. Daily and Chat have separate provider settings.")
     ) {
       VStack(alignment: .leading, spacing: 0) {
         summaryRows
@@ -277,7 +277,7 @@ struct SettingsProvidersTabView: View {
   private var failoverRoutingSection: some View {
     SettingsSection(
       title: String(localized: "Failover routing"),
-      subtitle: String(localized: "Choose primary and secondary providers.")
+      subtitle: String(localized: "Choose primary and backup providers for your timeline.")
     ) {
       VStack(alignment: .leading, spacing: 0) {
         let providers = viewModel.routingProviders
