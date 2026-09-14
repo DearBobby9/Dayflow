@@ -65,7 +65,8 @@ struct SettingsView: View {
               providersViewModel.cancelProviderSetup()
             }
           }
-        )
+        ),
+        onDismiss: { providersViewModel.presentPendingAppleBackupConfirmation() }
       ) { wrapper in
         LLMProviderSetupView(
           providerType: wrapper.providerID,

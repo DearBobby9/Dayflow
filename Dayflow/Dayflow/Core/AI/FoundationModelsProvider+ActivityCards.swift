@@ -131,22 +131,34 @@ extension FoundationModelsProvider {
       distractions: nil, appSites: content.appSites)
     let currentInterval = try ClaudeOutputValidator.resolveActivityCardInterval(current, nearest: cutoff)
 
-    // A legacy whole-window result may extend into this batch or the future. Preserve only
-    // its historical prefix; it must never dictate the bounds of new evidence.
-    let previous = context.existingCards.compactMap { card -> (ActivityCardData, Range<Int>)? in
+    // Replacement deletes whole overlapping cards. An earlier batch retry must return
+    // their untouched suffixes too; the capture cutoff constrains only new content.
+    let existing = context.existingCards.compactMap { card -> (ActivityCardData, Range<Int>)? in
       guard let interval = try? ClaudeOutputValidator.resolveActivityCardInterval(card, nearest: cutoff),
-        interval.lowerBound < currentInterval.lowerBound else { return nil }
+        interval.lowerBound < cutoff else { return nil }
       return (card, interval)
     }.sorted { $0.1.lowerBound < $1.1.lowerBound }
+
+    func preservedCard(_ card: ActivityCardData, start: Int, end: Int) -> ActivityCardData {
+      ActivityCardData(startTime: formatter.formatTimestampForPrompt(start),
+        endTime: formatter.formatTimestampForPrompt(end), category: card.category,
+        subcategory: card.subcategory, title: card.title, summary: card.summary,
+        detailedSummary: card.detailedSummary, distractions: card.distractions, appSites: card.appSites)
+    }
+
     var cards: [ActivityCardData] = []
-    for (index, item) in previous.enumerated() {
-      let nextStart = index + 1 < previous.count ? previous[index + 1].1.lowerBound : currentInterval.lowerBound
+    var suffixes: [ActivityCardData] = []
+    for (index, item) in existing.enumerated() {
+      let nextStart = index + 1 < existing.count ? existing[index + 1].1.lowerBound : item.1.upperBound
       let preservedEnd = min(item.1.upperBound, nextStart, currentInterval.lowerBound)
-      guard preservedEnd > item.1.lowerBound else { continue }
-      cards.append(ActivityCardData(startTime: item.0.startTime,
-        endTime: formatter.formatTimestampForPrompt(preservedEnd), category: item.0.category,
-        subcategory: item.0.subcategory, title: item.0.title, summary: item.0.summary,
-        detailedSummary: item.0.detailedSummary, distractions: item.0.distractions, appSites: item.0.appSites))
+      if preservedEnd > item.1.lowerBound {
+        cards.append(preservedCard(item.0, start: item.1.lowerBound, end: preservedEnd))
+      }
+      let suffixStart = max(item.1.lowerBound, currentInterval.upperBound)
+      let suffixEnd = min(item.1.upperBound, nextStart)
+      if suffixEnd > suffixStart {
+        suffixes.append(preservedCard(item.0, start: suffixStart, end: suffixEnd))
+      }
     }
 
     var changedCard = current
@@ -182,7 +194,8 @@ extension FoundationModelsProvider {
       observations: observations,
       options: ClaudeOutputValidationOptions(sourceConnectionToleranceSeconds: 5 * 60))
     cards.append(changedCard)
-    let sequence = formatter.validateCardSequence(cards)
+    cards.append(contentsOf: suffixes)
+    let sequence = formatter.validateCardSequence(cards, nearest: cutoff)
     guard sequence.isValid else {
       throw Self.makeError(code: 6, message: sequence.error ?? Self.errorMessage(code: 6, detail: ""))
     }

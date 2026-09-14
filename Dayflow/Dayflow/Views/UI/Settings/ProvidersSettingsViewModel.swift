@@ -405,14 +405,9 @@ final class ProvidersSettingsViewModel: ObservableObject {
     let routingSucceeded: Bool
     switch role {
     case .primary:
-      if providerId == .foundationModels, routing.secondary != nil {
-        requestAssignPrimaryProvider(providerId)
-        routingSucceeded = true
-      } else {
-        routingSucceeded = assignPrimaryProvider(providerId, requiresReadinessCheck: false)
-      }
+      routingSucceeded = requestAssignPrimaryProvider(providerId, requiresReadinessCheck: false)
     case .secondary:
-      routingSucceeded = assignSecondaryProvider(providerId, requiresReadinessCheck: false)
+      routingSucceeded = requestAssignSecondaryProvider(providerId, requiresReadinessCheck: false)
     case .setupOnly:
       routingSucceeded = true
     }
@@ -456,13 +451,31 @@ final class ProvidersSettingsViewModel: ObservableObject {
     }
   }
 
-  func requestAssignPrimaryProvider(_ providerId: LLMProviderID) {
-    guard providerId == .foundationModels, routing.secondary != nil else {
-      assignPrimaryProvider(providerId)
-      return
+  private func requiresAppleBackupConfirmation(_ targetRouting: LLMProviderRouting) -> Bool {
+    targetRouting != routing && targetRouting.primary == .foundationModels
+      && targetRouting.secondary != nil
+  }
+
+  func presentPendingAppleBackupConfirmation() {
+    // The setup sheet must finish dismissing before its parent can present an alert.
+    guard setupModalProvider == nil else { return }
+    showKeepBackupConfirm = pendingPrimarySelection != nil
+    showBackupDataConfirm = pendingSecondarySelection != nil
+  }
+
+  @discardableResult
+  func requestAssignPrimaryProvider(
+    _ providerId: LLMProviderID, requiresReadinessCheck: Bool = true
+  ) -> Bool {
+    guard canModifyRouting else { return false }
+    let targetRouting = LLMProviderRouting(primary: providerId,
+      secondary: routing.secondary == providerId ? routing.primary : routing.secondary)
+    guard requiresAppleBackupConfirmation(targetRouting) else {
+      return assignPrimaryProvider(providerId, requiresReadinessCheck: requiresReadinessCheck)
     }
     pendingPrimarySelection = providerId
-    showKeepBackupConfirm = true
+    presentPendingAppleBackupConfirmation()
+    return true
   }
 
   func confirmKeepBackup() {
@@ -487,13 +500,20 @@ final class ProvidersSettingsViewModel: ObservableObject {
     showBackupDataConfirm = false
   }
 
-  func requestAssignSecondaryProvider(_ providerId: LLMProviderID) {
-    guard routing.primary == .foundationModels else {
-      assignSecondaryProvider(providerId)
-      return
+  @discardableResult
+  func requestAssignSecondaryProvider(
+    _ providerId: LLMProviderID, requiresReadinessCheck: Bool = true
+  ) -> Bool {
+    guard canModifyRouting else { return false }
+    let primary = providerId == routing.primary ? routing.secondary : routing.primary
+    guard let primary else { return false }
+    let targetRouting = LLMProviderRouting(primary: primary, secondary: providerId)
+    guard requiresAppleBackupConfirmation(targetRouting) else {
+      return assignSecondaryProvider(providerId, requiresReadinessCheck: requiresReadinessCheck)
     }
     pendingSecondarySelection = providerId
-    showBackupDataConfirm = true
+    presentPendingAppleBackupConfirmation()
+    return true
   }
 
   func confirmAssignSecondary() {

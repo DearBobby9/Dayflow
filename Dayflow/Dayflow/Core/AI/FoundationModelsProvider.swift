@@ -248,8 +248,9 @@ final class FoundationModelsProvider: ChatGPTTimelinePromptSupporting {
           startedAt: callStart, error: error)
         throw error
       }
-      let header = ScreenshotHeaderOCR.text(in: fullImage)
-      decodedFrames.append((screenshot, image, header, ScreenshotHeaderOCR.crop(from: fullImage)))
+      let headerImage = ScreenshotHeaderOCR.crop(from: fullImage)
+      let header = headerImage.map { ScreenshotHeaderOCR.text(inHeader: $0) } ?? ""
+      decodedFrames.append((screenshot, image, header, headerImage))
     }
 
     var frameResults: [(capturedAt: Int, text: String)] = []
@@ -456,23 +457,22 @@ final class FoundationModelsProvider: ChatGPTTimelinePromptSupporting {
     }
   }
 
-  func validateCardSequence(_ cards: [ActivityCardData]) -> (isValid: Bool, error: String?) {
-    let firstStart = cards.first.map { timeToMinutes($0.startTime) } ?? 0
-    var previousEnd: Double?
+  func validateCardSequence(
+    _ cards: [ActivityCardData], nearest anchor: Int, calendar: Calendar = .current
+  ) -> (isValid: Bool, error: String?) {
+    var previousEnd: Int?
     for (index, card) in cards.enumerated() {
-      let clockPattern = #"^(?:0?[1-9]|1[0-2]):[0-5][0-9] (?:AM|PM)$"#
-      guard card.startTime.range(of: clockPattern, options: .regularExpression) != nil,
-        card.endTime.range(of: clockPattern, options: .regularExpression) != nil
-      else { return (false, "Card \(index + 1) has an invalid clock time; use h:mm AM/PM.") }
-      var start = timeToMinutes(card.startTime)
-      if firstStart >= 720 && start < 720 { start += 1440 }
-      var end = timeToMinutes(card.endTime)
-      if end < start { end += 1440 }
-      guard end > start else { return (false, "Card \(index + 1) has no positive duration.") }
-      if let previousEnd, start < previousEnd {
+      let interval: Range<Int>
+      do {
+        interval = try ClaudeOutputValidator.resolveActivityCardInterval(
+          card, nearest: anchor, calendar: calendar)
+      } catch {
+        return (false, error.localizedDescription)
+      }
+      if let previousEnd, interval.lowerBound < previousEnd {
         return (false, "Card \(index + 1) overlaps the previous card. Start it at or after the previous end time.")
       }
-      previousEnd = end
+      previousEnd = interval.upperBound
     }
     return (true, nil)
   }

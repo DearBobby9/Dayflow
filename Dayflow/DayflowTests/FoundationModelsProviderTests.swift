@@ -171,10 +171,36 @@ final class FoundationModelsProviderTests: XCTestCase {
         title: "Activity", summary: "", detailedSummary: "", distractions: nil, appSites: nil)
     }
     let provider = FoundationModelsProvider(logsCalls: false)
-    XCTAssertFalse(provider.validateCardSequence([card("9:20 PM", "9:35 PM"), card("9:25 PM", "9:40 PM")]).isValid)
-    XCTAssertFalse(provider.validateCardSequence([card("9:20 PM", "9:20 PM")]).isValid)
-    XCTAssertFalse(provider.validateCardSequence([card("invalid", "9:20 PM")]).isValid)
-    XCTAssertTrue(provider.validateCardSequence([card("11:50 PM", "12:05 AM"), card("12:05 AM", "12:20 AM")]).isValid)
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+    let anchor = Int(calendar.date(from: DateComponents(year: 2026, month: 9, day: 12,
+      hour: 23, minute: 55))!.timeIntervalSince1970)
+    func isValid(_ cards: [ActivityCardData]) -> Bool {
+      provider.validateCardSequence(cards, nearest: anchor, calendar: calendar).isValid
+    }
+    XCTAssertFalse(isValid([card("9:20 PM", "9:35 PM"), card("9:25 PM", "9:40 PM")]))
+    XCTAssertFalse(isValid([card("9:20 PM", "9:20 PM")]))
+    XCTAssertFalse(isValid([card("invalid", "9:20 PM")]))
+    XCTAssertTrue(isValid([card("11:50 PM", "12:05 AM"), card("12:05 AM", "12:20 AM")]))
+  }
+
+  func testSequenceDistinguishesRepeatedHourFromAnActualOverlap() throws {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "America/Chicago"))
+    let anchor = Int(try XCTUnwrap(ISO8601DateFormatter().date(
+      from: "2026-11-01T01:15:00-06:00")).timeIntervalSince1970)
+    func card(_ start: String, _ end: String) -> ActivityCardData {
+      ActivityCardData(startTime: start, endTime: end, category: "Work", subcategory: "",
+        title: "Activity", summary: "", detailedSummary: "", distractions: nil, appSites: nil)
+    }
+    let provider = FoundationModelsProvider(logsCalls: false)
+
+    XCTAssertTrue(provider.validateCardSequence([
+      card("1:45 AM", "1:59 AM"), card("1:00 AM", "1:15 AM")
+    ], nearest: anchor, calendar: calendar).isValid)
+    XCTAssertFalse(provider.validateCardSequence([
+      card("1:45 AM", "1:59 AM"), card("1:50 AM", "1:58 AM")
+    ], nearest: anchor, calendar: calendar).isValid)
   }
 
   func testSampledIndicesKeepsFirstAndLastAndCapsAt16() {

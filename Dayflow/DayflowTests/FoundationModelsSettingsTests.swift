@@ -50,6 +50,11 @@ final class FoundationModelsSettingsTests: XCTestCase {
     )
   }
 
+  private func seedLocalProvider() {
+    UserDefaults.standard.set("http://localhost:11434", forKey: "llmLocalBaseURL")
+    UserDefaults.standard.set("test-vision-model", forKey: "llmLocalModelId")
+  }
+
   func testAppleSetupRequiresReadinessCheckAfterIntroduction() {
     let state = ProviderSetupState()
     state.configureSteps(for: .foundationModels)
@@ -158,7 +163,83 @@ final class FoundationModelsSettingsTests: XCTestCase {
     XCTAssertTrue(succeeded)
     XCTAssertEqual(viewModel.primaryRoutingProviderId, .gemini)
     XCTAssertEqual(viewModel.secondaryRoutingProviderId, .local)
-    XCTAssertTrue(viewModel.showKeepBackupConfirm)
+    XCTAssertFalse(viewModel.showKeepBackupConfirm)
     XCTAssertEqual(viewModel.pendingPrimarySelection, .foundationModels)
+
+    viewModel.cancelProviderSetup()
+    viewModel.presentPendingAppleBackupConfirmation()
+
+    XCTAssertTrue(viewModel.showKeepBackupConfirm)
+  }
+
+  func testSecondarySetupWithAppleDefersRoutingUntilConfirmed() throws {
+    try seedRouting(primary: .foundationModels)
+    let viewModel = ProvidersSettingsViewModel()
+    viewModel.loadRouting()
+    viewModel.beginProviderSetup(.local, role: .secondary)
+    seedLocalProvider()
+
+    XCTAssertTrue(viewModel.handleProviderSetupCompletion(.local))
+
+    XCTAssertNil(viewModel.secondaryRoutingProviderId)
+    XCTAssertNil(try LLMProviderRoutingStore.load().secondary)
+    XCTAssertFalse(viewModel.showBackupDataConfirm)
+    XCTAssertEqual(viewModel.pendingSecondarySelection, .local)
+
+    viewModel.cancelProviderSetup()
+    viewModel.presentPendingAppleBackupConfirmation()
+    XCTAssertTrue(viewModel.showBackupDataConfirm)
+    viewModel.confirmAssignSecondary()
+
+    XCTAssertEqual(viewModel.primaryRoutingProviderId, .foundationModels)
+    XCTAssertEqual(try LLMProviderRoutingStore.load().secondary, .local)
+  }
+
+  func testCancellingSecondarySetupConfirmationPreservesAppleOnlyRouting() throws {
+    try seedRouting(primary: .foundationModels)
+    let viewModel = ProvidersSettingsViewModel()
+    viewModel.loadRouting()
+    viewModel.beginProviderSetup(.local, role: .secondary)
+    XCTAssertTrue(viewModel.handleProviderSetupCompletion(.local))
+
+    viewModel.cancelProviderSetup()
+    viewModel.presentPendingAppleBackupConfirmation()
+    viewModel.cancelPendingSelection()
+
+    XCTAssertEqual(try LLMProviderRoutingStore.load().primary, .foundationModels)
+    XCTAssertNil(try LLMProviderRoutingStore.load().secondary)
+    XCTAssertNil(viewModel.pendingSecondarySelection)
+  }
+
+  func testSecondaryRoleSwapToAppleDefersUntilConfirmed() throws {
+    try seedRouting(primary: .local, secondary: .foundationModels)
+    seedLocalProvider()
+    let viewModel = ProvidersSettingsViewModel()
+    viewModel.loadRouting()
+
+    viewModel.requestAssignSecondaryProvider(.local)
+
+    XCTAssertEqual(try LLMProviderRoutingStore.load().primary, .local)
+    XCTAssertEqual(try LLMProviderRoutingStore.load().secondary, .foundationModels)
+    XCTAssertTrue(viewModel.showBackupDataConfirm)
+    XCTAssertEqual(viewModel.pendingSecondarySelection, .local)
+
+    viewModel.confirmAssignSecondary()
+
+    XCTAssertEqual(try LLMProviderRoutingStore.load().primary, .foundationModels)
+    XCTAssertEqual(try LLMProviderRoutingStore.load().secondary, .local)
+  }
+
+  func testSecondarySetupWithoutAppleKeepsImmediateAssignment() throws {
+    try seedRouting(primary: .chatGPT)
+    let viewModel = ProvidersSettingsViewModel()
+    viewModel.loadRouting()
+    viewModel.beginProviderSetup(.local, role: .secondary)
+
+    XCTAssertTrue(viewModel.handleProviderSetupCompletion(.local))
+
+    XCTAssertEqual(try LLMProviderRoutingStore.load().primary, .chatGPT)
+    XCTAssertEqual(try LLMProviderRoutingStore.load().secondary, .local)
+    XCTAssertFalse(viewModel.showBackupDataConfirm)
   }
 }

@@ -72,23 +72,46 @@ final class FoundationModelsLocalCardTests: XCTestCase {
     XCTAssertEqual(cards.map(\.endTime), ["2:48 AM", "3:03 AM"])
   }
 
-  func testLegacyFutureCardsCannotPropagateOrOverlapCurrentBatch() async throws {
+  func testStoredCardSuffixIsPreservedWithoutDuplicatingCardsOutsideReplacementWindow() async throws {
     let start = timestamp(14, 27)
     let end = timestamp(14, 42)
     let input = context([observation(start, end)], previous: [
       card("1:42 PM", "2:27 PM"), card("2:27 PM", "3:00 PM"),
       card("3:00 PM", "3:27 PM", category: "Idle")], cutoff: end)
     let cards = try await Provider.composeActivityCards(context: input, actions: actions())
-    XCTAssertEqual(cards.count, 2)
-    XCTAssertEqual(cards.map(\.endTime), ["2:27 PM", "2:42 PM"])
+    XCTAssertEqual(cards.map(\.startTime), ["1:42 PM", "2:27 PM", "2:42 PM"])
+    XCTAssertEqual(cards.map(\.endTime), ["2:27 PM", "2:42 PM", "3:00 PM"])
   }
 
-  func testLegacyCardOverlappingCurrentBatchKeepsOnlyHistoricalPrefix() async throws {
+  func testReprocessingPreservesBothSidesOfAnOverlappingStoredCard() async throws {
     let input = context([observation(timestamp(15, 0), timestamp(15, 15))],
       previous: [card("2:42 PM", "4:05 PM")], cutoff: timestamp(15, 15))
     let cards = try await Provider.composeActivityCards(context: input, actions: actions())
-    XCTAssertEqual(cards.map(\.startTime), ["2:42 PM", "3:00 PM"])
-    XCTAssertEqual(cards.map(\.endTime), ["3:00 PM", "3:15 PM"])
+    XCTAssertEqual(cards.map(\.startTime), ["2:42 PM", "3:00 PM", "3:15 PM"])
+    XCTAssertEqual(cards.map(\.endTime), ["3:00 PM", "3:15 PM", "4:05 PM"])
+    XCTAssertEqual(cards.map(\.title), ["Earlier work", "Review document", "Earlier work"])
+  }
+
+  func testReprocessingFirstBatchOfMergedCardKeepsLaterActivity() async throws {
+    let input = context([observation(timestamp(14, 0), timestamp(14, 15))],
+      previous: [card("2:00 PM", "2:45 PM")], cutoff: timestamp(14, 15))
+
+    let cards = try await Provider.composeActivityCards(context: input, actions: actions())
+
+    XCTAssertEqual(cards.map(\.startTime), ["2:00 PM", "2:15 PM"])
+    XCTAssertEqual(cards.map(\.endTime), ["2:15 PM", "2:45 PM"])
+    XCTAssertEqual(cards.map(\.title), ["Review document", "Earlier work"])
+  }
+
+  func testOptionalMergeOnlyChangesTheReprocessedPrefixAndKeepsTheSuffix() async throws {
+    let input = context([observation(timestamp(14, 0), timestamp(14, 15))],
+      previous: [card("1:45 PM", "2:45 PM")], cutoff: timestamp(14, 15))
+
+    let cards = try await Provider.composeActivityCards(context: input, actions: actions(merge: true))
+
+    XCTAssertEqual(cards.map(\.startTime), ["1:45 PM", "2:15 PM"])
+    XCTAssertEqual(cards.map(\.endTime), ["2:15 PM", "2:45 PM"])
+    XCTAssertEqual(cards.map(\.title), ["Continue document review", "Earlier work"])
   }
 
   func testMergeAcrossMidnightUsesExistingBoundaries() async throws {
