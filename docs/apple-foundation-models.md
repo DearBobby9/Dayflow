@@ -50,10 +50,6 @@ The focused regression suites are:
 
 Run these suites on macOS 27 using the Dayflow scheme. Run the settings and routing suites serially because they temporarily use and restore standard preferences. Availability-dependent cases can skip on an ineligible Mac.
 
-Live checks are opt-in and are not required for the regression suites:
+The optional `DAYFLOW_FM_LIVE_CARDS=1` check runs card generation against synthetic observations. When launching it through `xcodebuild`, use `TEST_RUNNER_DAYFLOW_FM_LIVE_CARDS=1`. Transcription regression tests create temporary fixture images and inject model responses, so they do not depend on personal recordings or a production database.
 
-- `DAYFLOW_FM_LIVE_CARDS=1` runs card generation against synthetic observations.
-- `DAYFLOW_FM_LIVE=1` reads two local JPEG recordings for transcription.
-- `DAYFLOW_FM_SPIKE=1` enables the local recording/SQLite evaluation suite; `DAYFLOW_FM_SPIKE_BATCH_ID` optionally selects a completed batch.
-
-When launching tests through `xcodebuild`, prefix these environment variables with `TEST_RUNNER_`. The recording checks can write private screen descriptions into test logs or attachments, so keep those results local. Automated assertions establish contracts and recovery behavior; they do not measure overall semantic accuracy or application energy use.
+Automated assertions establish contracts and recovery behavior; they do not measure overall semantic accuracy or application energy use.

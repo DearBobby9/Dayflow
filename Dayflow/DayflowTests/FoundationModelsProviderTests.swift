@@ -314,48 +314,4 @@ final class FoundationModelsProviderTests: XCTestCase {
     )
   }
 
-  func testLiveTranscribeProducesObservations() async throws {
-    guard ProcessInfo.processInfo.environment["DAYFLOW_FM_LIVE"] == "1" else {
-      throw XCTSkip("set TEST_RUNNER_DAYFLOW_FM_LIVE=1 to run")
-    }
-    guard #available(macOS 27.0, *) else {
-      throw XCTSkip("Foundation Models live path needs macOS 27.")
-    }
-
-    let recordingsURL = FileManager.default.urls(
-      for: .applicationSupportDirectory,
-      in: .userDomainMask
-    )[0].appendingPathComponent("Dayflow/recordings", isDirectory: true)
-    let files = try FileManager.default.contentsOfDirectory(atPath: recordingsURL.path)
-      .filter { $0.hasSuffix(".jpg") }
-      .sorted()
-      .prefix(2)
-    guard files.count == 2 else {
-      throw XCTSkip("Need two local JPEG recordings to run the live test.")
-    }
-
-    let screenshots = files.enumerated().map { index, file in
-      Screenshot(
-        id: Int64(index + 1),
-        capturedAt: 1_000_000 + index * 10,
-        filePath: recordingsURL.appendingPathComponent(file).path,
-        fileSize: nil,
-        idleSecondsAtCapture: nil,
-        isDeleted: false,
-        frameIndex: nil
-      )
-    }
-    let provider = FoundationModelsProvider(logsCalls: false)
-    let result = try await provider.transcribeScreenshots(
-      screenshots,
-      batchStartTime: Date(timeIntervalSince1970: 1_000_000),
-      batchId: nil
-    )
-    XCTAssertEqual(result.observations.count, 2)
-    XCTAssertTrue(result.observations.allSatisfy { !$0.observation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
-    XCTAssertTrue(result.observations.allSatisfy { $0.observation.contains(": ") })
-    XCTAssertEqual(result.observations[0].endTs, 1_000_010)
-    XCTAssertEqual(result.observations[1].endTs, 1_000_020)
-    XCTAssertTrue(result.log.input?.hasPrefix("frames=2/2") == true)
-  }
 }
